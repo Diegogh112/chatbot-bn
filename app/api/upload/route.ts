@@ -96,6 +96,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'El archivo no contiene texto extraíble' }, { status: 400 });
   }
 
+  // Log token estimate for debugging rate limit issues
+  const totalWords = chunks.reduce((sum, c) => sum + c.split(/\s+/).length, 0);
+  console.log(`[upload] ${chunks.length} chunks, ~${totalWords} tokens para "${nombre}"`);
+
   // ── Step 6: Embed chunks (with Cohere error → 502) ───────────────────────
   // Requirements 1.4, 1.10
   let embeddings: number[][];

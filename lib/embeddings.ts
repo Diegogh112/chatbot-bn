@@ -10,6 +10,9 @@ const cohere = new CohereClient({ token: process.env.COHERE_API_KEY! });
 // Cohere embed API accepts at most 96 texts per request
 const COHERE_BATCH_SIZE = 96;
 
+// Delay between batches to avoid hitting trial rate limits (100k tokens/min)
+const BATCH_DELAY_MS = 1000;
+
 /**
  * Generates embeddings for an array of document texts.
  * Automatically batches the input into groups of 96 (Cohere API limit).
@@ -33,6 +36,11 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
       inputType: 'search_document',
     });
     results.push(...(res.embeddings as number[][]));
+
+    // Pause between batches to avoid exceeding trial rate limits
+    if (i + COHERE_BATCH_SIZE < texts.length) {
+      await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
+    }
   }
 
   return results;

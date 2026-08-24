@@ -209,13 +209,6 @@ export default function Chat() {
               Tu asistente inteligente para la gestión de proyectos y demanda de TI
               del <strong>Banco de la Nación</strong>. ¿En qué puedo ayudarte hoy?
             </p>
-            <div className="chat-suggestions">
-              {SUGGESTIONS.map(s => (
-                <button key={s} className="suggestion-chip" onClick={() => sendMessage(s)}>
-                  {s}
-                </button>
-              ))}
-            </div>
           </div>
         )}
 

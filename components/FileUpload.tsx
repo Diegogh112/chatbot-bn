@@ -52,7 +52,7 @@ export default function FileUpload({ adminSecret, onUploadSuccess }: FileUploadP
       <input
         ref={fileInputRef}
         type="file"
-        accept=".pdf,.docx,.xlsx,.txt"
+        accept=".pdf,.docx,.xlsx,.xlsm,.txt"
         disabled={isLoading}
         aria-label="Seleccionar archivo"
       />

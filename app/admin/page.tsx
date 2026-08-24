@@ -14,7 +14,7 @@ const ADMIN_SECRET = process.env.NEXT_PUBLIC_ADMIN_SECRET ?? '';
 
 function typeBadge(tipo: string) {
   const t = tipo.toLowerCase();
-  if (['pdf','docx','xlsx','txt','nota'].includes(t)) return t;
+  if (['pdf','docx','xlsx','xlsm','txt','nota'].includes(t)) return t;
   return 'txt';
 }
 
@@ -226,7 +226,7 @@ export default function AdminPage() {
             <div className="admin-card-icon admin-card-icon--blue">📤</div>
             <div>
               <div className="admin-card-title">Subir documento</div>
-              <div className="admin-card-desc">PDF, DOCX, XLSX o TXT</div>
+              <div className="admin-card-desc">PDF, DOCX, XLSX, XLSM o TXT</div>
             </div>
           </div>
           <div className="admin-card-body">
@@ -240,7 +240,7 @@ export default function AdminPage() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".pdf,.docx,.xlsx,.txt"
+                  accept=".pdf,.docx,.xlsx,.xlsm,.txt"
                   disabled={isUploading}
                   onChange={e => setSelectedFile(e.target.files?.[0] ?? null)}
                   aria-label="Seleccionar archivo"

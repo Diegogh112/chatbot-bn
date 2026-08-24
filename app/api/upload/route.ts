@@ -14,7 +14,7 @@ import { insertDocumentWithChunks } from '@/lib/database';
  * Supported file extensions for document ingestion.
  * Requirements: 1.1, 1.8
  */
-const SUPPORTED_FORMATS = new Set(['pdf', 'docx', 'xlsx', 'txt']);
+const SUPPORTED_FORMATS = new Set(['pdf', 'docx', 'xlsx', 'xlsm', 'txt']);
 
 /**
  * POST /api/upload
@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
       text = await parsePdf(buffer);
     } else if (ext === 'docx') {
       text = await parseDocx(buffer);
-    } else if (ext === 'xlsx') {
+    } else if (ext === 'xlsx' || ext === 'xlsm') {
       text = parseXlsx(buffer);
     } else {
       // txt — plain UTF-8 decode

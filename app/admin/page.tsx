@@ -18,6 +18,69 @@ function typeBadge(tipo: string) {
   return 'txt';
 }
 
+function NoteViewerModal({ doc, onClose }: { doc: Document; onClose: () => void }) {
+  const [content, setContent] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await fetch(`/api/documents/${doc.id}/chunks`, {
+          headers: { 'x-admin-secret': ADMIN_SECRET },
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? `Error ${res.status}`);
+        setContent(data.content);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Error al cargar contenido');
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    load();
+  }, [doc.id]);
+
+  // Close on Escape
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [onClose]);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <div className="modal-title">
+            <span className={`doc-type-badge doc-type-badge--${typeBadge(doc.tipo)}`}>{doc.tipo}</span>
+            <span>{doc.nombre}</span>
+          </div>
+          <button className="modal-close" onClick={onClose} aria-label="Cerrar">✕</button>
+        </div>
+        <div className="modal-body">
+          {isLoading && (
+            <div style={{ display: 'flex', justifyContent: 'center', padding: '40px' }}>
+              <div className="spinner spinner--dark" />
+            </div>
+          )}
+          {error && <div className="alert alert--error">⚠ {error}</div>}
+          {content && (
+            <pre className="note-content-pre">{content}</pre>
+          )}
+        </div>
+        <div className="modal-footer">
+          <button className="btn-primary" style={{ width: 'auto', margin: 0 }} onClick={onClose}>
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [isLoadingDocs, setIsLoadingDocs] = useState(false);
@@ -34,6 +97,9 @@ export default function AdminPage() {
   const [noteContent, setNoteContent] = useState('');
   const [isSavingNote, setIsSavingNote] = useState(false);
   const [noteMsg, setNoteMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Viewer state
+  const [viewingDoc, setViewingDoc] = useState<Document | null>(null);
 
   const fetchDocuments = useCallback(async () => {
     setIsLoadingDocs(true);
@@ -128,6 +194,9 @@ export default function AdminPage() {
 
   return (
     <div className="admin-layout">
+      {viewingDoc && (
+        <NoteViewerModal doc={viewingDoc} onClose={() => setViewingDoc(null)} />
+      )}
       {/* Header */}
       <header className="admin-header">
         <div className="admin-header-brand">
@@ -293,13 +362,22 @@ export default function AdminPage() {
                         })}
                       </div>
                     </div>
-                    <button
-                      className="btn-delete"
-                      onClick={() => handleDelete(doc.id, doc.nombre)}
-                      aria-label={`Eliminar ${doc.nombre}`}
-                    >
-                      🗑 Eliminar
-                    </button>
+                    <div className="doc-item-actions">
+                      <button
+                        className="btn-view"
+                        onClick={() => setViewingDoc(doc)}
+                        aria-label={`Ver contenido de ${doc.nombre}`}
+                      >
+                        👁 Ver
+                      </button>
+                      <button
+                        className="btn-delete"
+                        onClick={() => handleDelete(doc.id, doc.nombre)}
+                        aria-label={`Eliminar ${doc.nombre}`}
+                      >
+                        🗑 Eliminar
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>

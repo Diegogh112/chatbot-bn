@@ -197,6 +197,31 @@ export async function deleteDocument(id: string): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
+// getChunksByDocumentId — returns all chunks for a document ordered by position
+// ---------------------------------------------------------------------------
+export async function getChunksByDocumentId(documentId: string): Promise<Chunk[]> {
+  const { rows } = await getPool().query<{
+    id: string;
+    document_id: string;
+    texto: string;
+    posicion: number;
+  }>(
+    `SELECT id, document_id, texto, posicion
+     FROM chunks
+     WHERE document_id = $1
+     ORDER BY posicion ASC`,
+    [documentId],
+  );
+  return rows.map(row => ({
+    id: row.id,
+    document_id: row.document_id,
+    texto: row.texto,
+    embedding: [],
+    posicion: Number(row.posicion),
+  }));
+}
+
+// ---------------------------------------------------------------------------
 // searchChunks — cosine similarity top-K via pgvector; Requirement 4.2, 7.1
 // ---------------------------------------------------------------------------
 export async function searchChunks(

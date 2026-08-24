@@ -32,6 +32,12 @@ export default function Chat() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const messagesRef = useRef<ChatMessage[]>([]);
+
+  // Keep messagesRef in sync with messages state
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -78,16 +84,34 @@ export default function Chat() {
     }
 
     const newUserMsg: ChatMessage = { role: 'user', text: trimmed, id: ++msgIdCounter };
-    setMessages(prev => [...prev, newUserMsg]);
+
+    // Capture current messages BEFORE adding new one — this is the history
+    setMessages(prev => {
+      const historyForApi = prev.map(m => ({
+        role: m.role === 'user' ? 'USER' as const : 'CHATBOT' as const,
+        message: m.text,
+      }));
+      // Store for use in fetch below
+      (sendMessage as unknown as { _history: typeof historyForApi })._history = historyForApi;
+      return [...prev, newUserMsg];
+    });
+
     setIsLoading(true);
     const controller = new AbortController();
     abortRef.current = controller;
+
+    // Get current messages for history (before state update propagates)
+    const currentMessages = messagesRef.current;
+    const historyForApi = currentMessages.map(m => ({
+      role: m.role === 'user' ? 'USER' as const : 'CHATBOT' as const,
+      message: m.text,
+    }));
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: trimmed }),
+        body: JSON.stringify({ question: trimmed, history: historyForApi }),
         signal: controller.signal,
       });
       const data = await res.json();

@@ -11,7 +11,7 @@ const cohere = new CohereClient({ token: process.env.COHERE_API_KEY! });
 const COHERE_BATCH_SIZE = 96;
 
 // Delay between batches to avoid hitting trial rate limits (100k tokens/min)
-const BATCH_DELAY_MS = 1000;
+const BATCH_DELAY_MS = 3000;
 
 /**
  * Generates embeddings for an array of document texts.

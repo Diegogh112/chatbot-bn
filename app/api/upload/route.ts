@@ -87,8 +87,9 @@ export async function POST(request: NextRequest) {
 
   // ── Step 5: Chunk text ────────────────────────────────────────────────────
   // Requirement 1.3: 500 tokens max, 50-token overlap
-  // Filter out empty/whitespace-only chunks that could cause embedding errors
-  const rawChunks = chunkText(text);
+  // Excel files can be large — use smaller chunks to stay within Cohere trial limits
+  const chunkSize = (ext === 'xlsx' || ext === 'xlsm') ? 200 : 500;
+  const rawChunks = chunkText(text, chunkSize, 20);
   const chunks = rawChunks.map((c) => c.trim()).filter((c) => c.length > 0);
 
   if (chunks.length === 0) {

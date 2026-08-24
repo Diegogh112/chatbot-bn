@@ -87,17 +87,25 @@ export async function POST(request: NextRequest) {
 
   // ── Step 5: Chunk text ────────────────────────────────────────────────────
   // Requirement 1.3: 500 tokens max, 50-token overlap
-  const chunks = chunkText(text);
+  // Filter out empty/whitespace-only chunks that could cause embedding errors
+  const rawChunks = chunkText(text);
+  const chunks = rawChunks.map((c) => c.trim()).filter((c) => c.length > 0);
+
+  if (chunks.length === 0) {
+    return NextResponse.json({ error: 'El archivo no contiene texto extraíble' }, { status: 400 });
+  }
 
   // ── Step 6: Embed chunks (with Cohere error → 502) ───────────────────────
   // Requirements 1.4, 1.10
   let embeddings: number[][];
   try {
     embeddings = await embedTexts(chunks);
-  } catch {
+  } catch (err) {
     // Cohere API failure — no DB write has occurred yet, so no partial data
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error('[upload] Cohere embed error:', detail);
     return NextResponse.json(
-      { error: 'Embedding service unavailable' },
+      { error: 'Embedding service unavailable', detail },
       { status: 502 },
     );
   }

@@ -16,134 +16,136 @@ interface PdfTextContent {
 }
 
 // ---------------------------------------------------------------------------
-// Table detection helpers
+// Helpers
 // ---------------------------------------------------------------------------
 
-/** Round a coordinate to the nearest multiple of `snap` to group near-by items. */
-function snap(value: number, snapTo: number): number {
+/** Round a coordinate to the nearest multiple of `snapTo`. */
+function snapCoord(value: number, snapTo: number): number {
   return Math.round(value / snapTo) * snapTo;
 }
 
 /**
- * Given a list of text items from a single PDF page, detect whether they form
- * a grid (table) and, if so, return a Markdown-formatted table.  Returns null
- * when no table structure is detected.
- *
- * Strategy:
- *  1. Collect all unique y-positions (rows) and x-positions (columns).
- *  2. If there are at least 2 rows AND at least 2 columns, treat it as a table.
- *  3. Map each item to its (row, col) cell and render as Markdown.
+ * Given a set of text items that belong to a single horizontal band,
+ * decide if they form a table row (i.e. 2+ distinct x-positions with
+ * a reasonable gap between them).
  */
-function detectAndRenderTable(items: PdfTextItem[]): string | null {
-  if (items.length < 4) return null; // need at least a 2x2 grid
+function isTableBand(items: PdfTextItem[], minCols = 2): boolean {
+  const xs = new Set(items.map((i) => snapCoord(i.transform[4], 6)));
+  return xs.size >= minCols;
+}
 
-  // Snap positions to a grid to absorb minor rendering jitter (4 pt tolerance)
-  const SNAP = 4;
-
-  const ys = new Set<number>();
-  const xs = new Set<number>();
-
-  for (const item of items) {
-    if (!item.str.trim()) continue;
-    ys.add(snap(item.transform[5], SNAP)); // baseline y
-    xs.add(snap(item.transform[4], SNAP)); // left x
+/**
+ * Convert a group of items that form a table (multiple rows × multiple cols)
+ * into a Markdown pipe-table string.
+ */
+function renderTableMarkdown(rows: PdfTextItem[][]): string {
+  // Collect all unique x positions (columns) across all rows
+  const allXs = new Set<number>();
+  for (const row of rows) {
+    for (const item of row) {
+      allXs.add(snapCoord(item.transform[4], 6));
+    }
   }
-
-  const sortedYs = Array.from(ys).sort((a, b) => b - a); // top→bottom (PDF y grows upward)
-  const sortedXs = Array.from(xs).sort((a, b) => a - b); // left→right
-
-  // Require at least 2 rows and 2 columns to call it a table
-  if (sortedYs.length < 2 || sortedXs.length < 2) return null;
-
-  // Build a cell map: [rowIndex][colIndex] → text
-  const grid: Record<number, Record<number, string>> = {};
-
-  for (const item of items) {
-    if (!item.str.trim()) continue;
-    const row = sortedYs.indexOf(snap(item.transform[5], SNAP));
-    const col = sortedXs.indexOf(snap(item.transform[4], SNAP));
-    if (row === -1 || col === -1) continue;
-    grid[row] = grid[row] ?? {};
-    // Multiple items may map to the same cell (e.g. bold + regular runs) — concatenate
-    grid[row][col] = ((grid[row][col] ?? '') + ' ' + item.str).trim();
-  }
-
-  const numRows = sortedYs.length;
+  const sortedXs = Array.from(allXs).sort((a, b) => a - b);
   const numCols = sortedXs.length;
 
-  const getCell = (r: number, c: number) => (grid[r]?.[c] ?? '').replace(/\|/g, '\\|');
+  // Build cell grid
+  const grid: string[][] = rows.map((rowItems) => {
+    const cells = Array<string>(numCols).fill('');
+    for (const item of rowItems) {
+      const col = sortedXs.indexOf(snapCoord(item.transform[4], 6));
+      if (col !== -1) {
+        cells[col] = (cells[col] + ' ' + item.str).trim();
+      }
+    }
+    return cells.map((c) => c.replace(/\|/g, '\\|'));
+  });
 
-  // Build Markdown table
-  const headerCells = Array.from({ length: numCols }, (_, c) => getCell(0, c));
-  const header = '| ' + headerCells.join(' | ') + ' |';
+  const makeRow = (cells: string[]) => '| ' + cells.join(' | ') + ' |';
   const separator = '| ' + Array(numCols).fill('---').join(' | ') + ' |';
 
-  const bodyRows: string[] = [];
-  for (let r = 1; r < numRows; r++) {
-    const cells = Array.from({ length: numCols }, (_, c) => getCell(r, c));
-    // Skip fully-empty rows
-    if (cells.every((c) => c === '')) continue;
-    bodyRows.push('| ' + cells.join(' | ') + ' |');
-  }
-
-  return [header, separator, ...bodyRows].join('\n');
+  return [makeRow(grid[0]), separator, ...grid.slice(1).map(makeRow)].join('\n');
 }
 
 // ---------------------------------------------------------------------------
-// Page-level renderer
+// Page renderer
 // ---------------------------------------------------------------------------
 
 /**
- * Custom pdfjs page renderer used by pdf-parse.
- * Attempts to detect tables on each page and renders them as Markdown.
- * Non-tabular text is emitted as plain text in reading order.
+ * Processes one PDF page's text items into a string that preserves table
+ * structure as Markdown pipe-tables while leaving plain text untouched.
+ *
+ * Algorithm:
+ *  1. Group items into horizontal bands by snapping their y-coordinate.
+ *  2. Scan bands top→bottom. A band is a "table band" when it has ≥2
+ *     distinct x-positions (i.e. multiple columns).
+ *  3. Consecutive table bands form a table region; consecutive non-table
+ *     bands form plain-text regions.
+ *  4. Each region is rendered independently and joined.
  */
-function buildPageRenderer() {
-  // Accumulate page text across all pages
-  const pages: string[] = [];
+function renderPage(pageData: { getTextContent: () => Promise<PdfTextContent> }): Promise<string> {
+  return pageData.getTextContent().then((textContent) => {
+    const items = textContent.items.filter((i) => i.str.trim() !== '');
+    if (items.length === 0) return '';
 
-  function renderPage(pageData: { getTextContent: () => Promise<PdfTextContent> }): Promise<string> {
-    return pageData.getTextContent().then((textContent) => {
-      const items = textContent.items;
+    // --- Step 1: group items into horizontal bands ---
+    const Y_SNAP = 4; // pt tolerance for same-line items
+    const bandMap = new Map<number, PdfTextItem[]>();
+    for (const item of items) {
+      const y = snapCoord(item.transform[5], Y_SNAP);
+      if (!bandMap.has(y)) bandMap.set(y, []);
+      bandMap.get(y)!.push(item);
+    }
 
-      // --- Try to detect a table in the full item list first ---
-      const tableMarkdown = detectAndRenderTable(items);
-      if (tableMarkdown) {
-        pages.push(tableMarkdown);
-        return tableMarkdown + '\n\n';
+    // Sort bands top→bottom (PDF y-axis grows upward, so higher y = higher on page)
+    const sortedYs = Array.from(bandMap.keys()).sort((a, b) => b - a);
+
+    // --- Step 2 & 3: classify bands and group into regions ---
+    type Region =
+      | { type: 'table'; rows: PdfTextItem[][] }
+      | { type: 'text'; lines: string[] };
+
+    const regions: Region[] = [];
+
+    for (const y of sortedYs) {
+      const bandItems = bandMap.get(y)!.sort((a, b) => a.transform[4] - b.transform[4]);
+      const isTable = isTableBand(bandItems);
+
+      const last = regions[regions.length - 1];
+
+      if (isTable) {
+        if (last?.type === 'table') {
+          last.rows.push(bandItems);
+        } else {
+          regions.push({ type: 'table', rows: [bandItems] });
+        }
+      } else {
+        const lineText = bandItems.map((i) => i.str).join(' ').trim();
+        if (last?.type === 'text') {
+          last.lines.push(lineText);
+        } else {
+          regions.push({ type: 'text', lines: [lineText] });
+        }
       }
+    }
 
-      // --- Fall back to line-based plain text extraction ---
-      // Group items by their snapped y-coordinate (line)
-      const SNAP = 3;
-      const lineMap: Record<number, PdfTextItem[]> = {};
-
-      for (const item of items) {
-        if (!item.str) continue;
-        const y = snap(item.transform[5], SNAP);
-        lineMap[y] = lineMap[y] ?? [];
-        lineMap[y].push(item);
+    // --- Step 4: render each region ---
+    const parts: string[] = [];
+    for (const region of regions) {
+      if (region.type === 'table' && region.rows.length >= 2) {
+        // Only render as table if there are at least 2 rows
+        parts.push(renderTableMarkdown(region.rows));
+      } else if (region.type === 'table') {
+        // Single-row "table" is just plain text
+        const line = region.rows[0].map((i) => i.str).join(' ').trim();
+        parts.push(line);
+      } else {
+        parts.push(region.lines.filter(Boolean).join('\n'));
       }
+    }
 
-      // Sort lines top→bottom (larger y = higher on page in PDF coords)
-      const sortedYs = Object.keys(lineMap)
-        .map(Number)
-        .sort((a, b) => b - a);
-
-      const lines: string[] = [];
-      for (const y of sortedYs) {
-        // Sort items within a line left→right
-        const lineItems = lineMap[y].sort((a, b) => a.transform[4] - b.transform[4]);
-        lines.push(lineItems.map((i) => i.str).join(' ').trim());
-      }
-
-      const pageText = lines.filter(Boolean).join('\n');
-      pages.push(pageText);
-      return pageText + '\n\n';
-    });
-  }
-
-  return renderPage;
+    return parts.filter(Boolean).join('\n\n') + '\n\n';
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -151,26 +153,20 @@ function buildPageRenderer() {
 // ---------------------------------------------------------------------------
 
 /**
- * Extracts plain text from a PDF file buffer.
- * Satisfies Requirements 1.1 (accept PDF format) and 1.2 (extract full plain text content).
+ * Extracts text from a PDF buffer, preserving table structure as Markdown
+ * pipe-tables while leaving non-tabular text as plain text.
  *
- * Tables inside the PDF are detected heuristically based on the x/y positions
- * of text items and rendered as Markdown tables so their row/column structure
- * is preserved through the RAG pipeline.
+ * Each page is segmented into horizontal bands. Consecutive bands with
+ * ≥2 distinct x-positions are treated as table rows; everything else is
+ * rendered as plain text lines.
  *
  * @param buffer - Raw bytes of the PDF file
- * @returns The extracted text content, with tables rendered as Markdown tables
+ * @returns Extracted text with tables as Markdown pipe-tables
  */
 export async function parsePdf(buffer: Buffer): Promise<string> {
-  const renderer = buildPageRenderer();
-
   const result = await pdfParse(buffer, {
-    // Provide a custom page renderer so we can access raw text items with
-    // their position metadata (transform / width / height).
-    pagerender: renderer as unknown as (pageData: unknown) => Promise<string>,
+    pagerender: renderPage as unknown as (pageData: unknown) => Promise<string>,
   });
 
-  // pdf-parse concatenates the strings returned by pagerender into result.text,
-  // but the renderer above already assembles the final content — use it directly.
   return result.text.trim();
 }
